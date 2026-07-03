@@ -55,7 +55,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "unknown stack" }, { status: 400 });
   }
 
-  const repo: string = body.repo || `${GITHUB_OWNER}/${projectName}`;
+  // Owner is chosen per-provision (UI dropdown): the personal account or the
+  // platform org. Falls back to the GITHUB_OWNER default. An explicit body.repo
+  // ("owner/name") still overrides both.
+  const owner: string = typeof body.owner === "string" && body.owner ? body.owner : GITHUB_OWNER;
+  const repo: string = body.repo || `${owner}/${projectName}`;
   const namespace: string = body.namespace || projectName;
   const configFile = "deployment.yaml";
   const isPrivate: boolean = body.private !== false;

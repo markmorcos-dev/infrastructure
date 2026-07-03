@@ -26,9 +26,14 @@ const DATA_SERVICES: { id: string; label: string; enabled: boolean }[] = [
   { id: "minio", label: "MinIO", enabled: false },
 ];
 
+// GitHub owner for the new repo: the platform org (default) or the personal
+// account. Chosen per-provision.
+const OWNER_OPTIONS = ["markmorcos-dev", "markmorcos"];
+
 export default function ProvisionPage() {
   const router = useRouter();
   const [name, setName] = useState("");
+  const [owner, setOwner] = useState(OWNER_OPTIONS[0]);
   const [repo, setRepo] = useState("");
   const [namespace, setNamespace] = useState("");
   const [stack, setStack] = useState(STACK_LIST[0].id);
@@ -64,6 +69,7 @@ export default function ProvisionPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           projectName: name,
+          owner,
           repo: repo || undefined,
           namespace: namespace || undefined,
           stack,
@@ -116,6 +122,34 @@ export default function ProvisionPage() {
             <Input value={f.value} onChange={(e) => f.set(e.target.value)} placeholder={f.ph} style={{ marginTop: 7 }} />
           </div>
         ))}
+
+        <div style={{ marginBottom: 16 }}>
+          <Label>GITHUB OWNER</Label>
+          <div style={{ display: "flex", gap: 6, marginTop: 7, flexWrap: "wrap" }}>
+            {OWNER_OPTIONS.map((o) => {
+              const active = owner === o;
+              return (
+                <button
+                  key={o}
+                  onClick={() => setOwner(o)}
+                  style={{
+                    flex: "1 1 45%",
+                    height: 38,
+                    borderRadius: 9,
+                    cursor: "pointer",
+                    fontFamily: "var(--cp-mono)",
+                    fontSize: 12,
+                    border: "1px solid " + (active ? "var(--md-sys-color-primary)" : "var(--md-sys-color-outline-variant)"),
+                    background: active ? "var(--md-sys-color-primary-container)" : "var(--md-sys-color-surface-container)",
+                    color: active ? "var(--md-sys-color-on-primary-container)" : "var(--md-sys-color-on-surface-variant)",
+                  }}
+                >
+                  {o}
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
         <div style={{ marginBottom: 16 }}>
           <Label>STACK</Label>

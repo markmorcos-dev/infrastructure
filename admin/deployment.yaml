@@ -41,10 +41,6 @@ services:
           secretKeyRef:
             name: github-credentials
             key: GITHUB_PAT
-      # New services the provisioner creates land in the platform org (was
-      # defaulting to the personal `markmorcos` account when unset).
-      - name: GITHUB_OWNER
-        value: markmorcos-dev
       # Verifies inbound GitHub webhooks (builds live updates). Optional so admin
       # boots without it; webhooks are rejected until the secret is set.
       - name: GITHUB_WEBHOOK_SECRET
