@@ -37,6 +37,10 @@ services:
           secretKeyRef:
             name: analytics-proxy
             key: ADMIN_SECRET
+      # CMS extracted to its own service + DB; the admin console proxies to it
+      # (forwarding the admin session cookie, which cms accepts — shared JWT_SECRET).
+      - name: CMS_SERVICE_URL
+        value: http://cms-cms-service.cms.svc.cluster.local:3000
       # Shared secret guarding the internal CMS service API (single write path,
       # called by the admin console and the practa product).
       - name: CMS_SERVICE_SECRET
