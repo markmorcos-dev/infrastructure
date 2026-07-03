@@ -29,6 +29,14 @@ services:
           secretKeyRef:
             name: experimentation-proxy
             key: ADMIN_SECRET
+      # Analytics likewise extracted; the admin dashboard proxies to it.
+      - name: ANALYTICS_SERVICE_URL
+        value: http://analytics-analytics-service.analytics.svc.cluster.local:3000
+      - name: ANALYTICS_ADMIN_SECRET
+        valueFrom:
+          secretKeyRef:
+            name: analytics-proxy
+            key: ADMIN_SECRET
       # Shared secret guarding the internal CMS service API (single write path,
       # called by the admin console and the practa product).
       - name: CMS_SERVICE_SECRET
