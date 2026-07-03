@@ -1,26 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { cmsPool } from "@/lib/db";
 import { getSessionUser, type SessionUser } from "@/lib/cms/authz";
 import { cached } from "@/lib/cache";
 import { getRunProject, listDeployRuns } from "@/lib/github";
 
-// Builds access control. Admins see every deploy-app run; an editor is scoped
-// to the apps whose CMS site they own — keyed by the site `key`, which matches
-// the deploy project (site "lea" → deploy-lea runs → project "lea"). We use the
-// key, not dispatch_event, because that field is the CMS content-publish event
-// and varies per site (e.g. "cms-publish"). Read fresh from the DB each request
-// so granting/revoking a site takes effect without re-login. Compared
-// case-insensitively since deploy project names are lowercase.
+// Builds access control. The control plane is admin-only (the editor tier was
+// retired when CMS was extracted — per-site ownership lives in the cms service
+// now, not this DB). Admins see every deploy-app run; a non-admin sees none.
 
-// null = unrestricted (admin). A Set of lowercased project keys = the exact
-// apps an editor may see (possibly empty → they see nothing).
+// null = unrestricted (admin). An empty Set = a non-admin (no builds visible).
 export async function allowedProjects(user: SessionUser): Promise<Set<string> | null> {
   if (user.role === "admin") return null;
-  const { rows } = await cmsPool.query<{ key: string }>(
-    `SELECT key FROM sites WHERE owner_user_id = $1`,
-    [user.userId],
-  );
-  return new Set(rows.map((r) => r.key.toLowerCase()));
+  return new Set();
 }
 
 type Guard = { user: SessionUser } | { error: NextResponse };

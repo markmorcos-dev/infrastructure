@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import jwt from "jsonwebtoken";
 import { serialize } from "cookie";
-import { cmsPool as pool } from "@/lib/db";
+import { pool } from "@/lib/db";
 import { verifyInviteToken } from "@/lib/cms/authz";
 import { updateUser } from "@/lib/users";
 

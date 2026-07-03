@@ -1,9 +1,10 @@
-import { cmsPool as pool } from "@/lib/db";
+import { pool } from "@/lib/db";
 import bcrypt from "bcrypt";
 
-// User management for the control plane. Uses cmsPool (search_path cms,public)
-// so a single query can join public.users to cms.sites for ownership. Passwords
-// are bcrypt-hashed, matching the login route.
+// User management for the control plane (public.users). Site ownership moved to
+// the cms service when CMS was extracted, and the control plane is admin-only
+// (no editor tier), so users no longer carry owned sites here. Passwords are
+// bcrypt-hashed, matching the login route.
 
 export interface ManagedUser {
   id: number;
@@ -17,19 +18,14 @@ const BCRYPT_ROUNDS = 10;
 
 export async function listUsers(): Promise<ManagedUser[]> {
   const { rows } = await pool.query(
-    `SELECT u.id, u.email, u.role, u.created_at,
-            COALESCE(array_remove(array_agg(s.key), NULL), '{}') AS owned_sites
-     FROM users u
-     LEFT JOIN sites s ON s.owner_user_id = u.id
-     GROUP BY u.id
-     ORDER BY u.created_at`
+    `SELECT id, email, role, created_at FROM users ORDER BY created_at`
   );
   return rows.map((r) => ({
     id: Number(r.id),
     email: r.email,
     role: r.role,
     createdAt: r.created_at,
-    ownedSites: r.owned_sites as string[],
+    ownedSites: [],
   }));
 }
 
@@ -65,25 +61,5 @@ export async function updateUser(
 }
 
 export async function deleteUser(id: number): Promise<void> {
-  // sites.owner_user_id is ON DELETE SET NULL, so owned sites revert to admin-only.
   await pool.query(`DELETE FROM users WHERE id = $1`, [id]);
-}
-
-// setOwnedSites makes `userId` the owner of exactly `siteKeys`: it claims those
-// sites and releases any others this user previously owned.
-export async function setOwnedSites(
-  userId: number,
-  siteKeys: string[]
-): Promise<void> {
-  await pool.query(
-    `UPDATE sites SET owner_user_id = NULL
-     WHERE owner_user_id = $1 AND key <> ALL($2::text[])`,
-    [userId, siteKeys]
-  );
-  if (siteKeys.length) {
-    await pool.query(
-      `UPDATE sites SET owner_user_id = $1 WHERE key = ANY($2::text[])`,
-      [userId, siteKeys]
-    );
-  }
 }
