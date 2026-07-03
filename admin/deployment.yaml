@@ -20,6 +20,15 @@ services:
           secretKeyRef:
             name: jwt-secret
             key: JWT_SECRET
+      # Experimentation was extracted to its own service; admin's
+      # /api/experimentation/* routes proxy to it with this shared secret.
+      - name: EXPERIMENTATION_SERVICE_URL
+        value: http://experimentation-experimentation-service.experimentation.svc.cluster.local:3000
+      - name: EXPERIMENTATION_ADMIN_SECRET
+        valueFrom:
+          secretKeyRef:
+            name: experimentation-proxy
+            key: ADMIN_SECRET
       # Shared secret guarding the internal CMS service API (single write path,
       # called by the admin console and the practa product).
       - name: CMS_SERVICE_SECRET
