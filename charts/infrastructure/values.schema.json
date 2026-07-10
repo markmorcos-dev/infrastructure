@@ -83,6 +83,11 @@
             "type": "string",
             "description": "Pod ServiceAccount name. Set when the service needs Kubernetes API access (e.g. reading/writing secrets). The ServiceAccount + RBAC must be provisioned separately (see k8s/)."
           },
+          "nodeSelector": {
+            "type": "object",
+            "description": "Node labels the pod must match (rendered as spec.template.spec.nodeSelector), e.g. kubernetes.io/hostname: m720q",
+            "additionalProperties": { "type": "string" }
+          },
           "tag": {
             "type": "string",
             "default": "latest",

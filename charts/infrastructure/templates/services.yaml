@@ -41,6 +41,10 @@ spec:
 {{- if .terminationGracePeriodSeconds }}
       terminationGracePeriodSeconds: {{ .terminationGracePeriodSeconds }}
 {{- end }}
+{{- if .nodeSelector }}
+      nodeSelector:
+{{ toYaml .nodeSelector | indent 8 }}
+{{- end }}
 {{- if .volumes }}
       volumes:
 {{- range .volumes }}
