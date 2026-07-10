@@ -61,18 +61,41 @@ jobs:
 
           # psql lacks a clean "same URL, other db" flag — rewrite the URL path.
           # Keeps any ?query params; appends the db if the URL has no path.
-          url_with_db() {
-            if printf '%s' "$ADMIN_URL" | grep -qE '://[^/]+/'; then
-              printf '%s' "$ADMIN_URL" | sed -E "s#(postgres(ql)?://[^/]+)/[^?]*#\1/$1#"
+          url_with_db() { # $1=url $2=db
+            if printf '%s' "$1" | grep -qE '://[^/]+/'; then
+              printf '%s' "$1" | sed -E "s#(postgres(ql)?://[^/]+)/[^?]*#\1/$2#"
             else
-              printf '%s/%s' "$ADMIN_URL" "$1"
+              printf '%s/%s' "$1" "$2"
             fi
           }
 
+          # The admin URL may carry an in-cluster DNS name (…svc.cluster.local)
+          # this runner can't resolve — swap in a tailnet-reachable host.
+          orig_host=$(printf '%s' "$ADMIN_URL" | sed -E 's#.*://([^/@]*@)?([^:/?]+).*#\2#')
+          reachable=""
+          for h in "$orig_host" m720q postgres.morcos.lan 100.86.224.60; do
+            CAND=$(printf '%s' "$ADMIN_URL" | sed -E "s#(://([^/@]*@)?)[^:/?]+#\1$h#")
+            if psql "$(url_with_db "$CAND" postgres)" -tAc 'SELECT 1' >/dev/null 2>&1; then
+              echo "postgres reachable via host: $h"
+              ADMIN_URL="$CAND"; reachable=1
+              break
+            fi
+          done
+          if [ -z "$reachable" ]; then
+            echo "::error::could not reach Postgres from the runner via $orig_host, m720q, postgres.morcos.lan or 100.86.224.60"
+            exit 1
+          fi
+
+          PG_ADMIN=$(url_with_db "$ADMIN_URL" postgres)
+
+          # fail early with a useful message if this role can't provision
+          if ! psql "$PG_ADMIN" -tAc "SELECT 1 FROM pg_roles WHERE rolname = current_user AND (rolsuper OR (rolcreatedb AND rolcreaterole))" | grep -q 1; then
+            echo "::error::the admin role lacks CREATE DATABASE/ROLE rights — add the POSTGRES_SUPERUSER_PASSWORD repo secret (POSTGRES_PASSWORD from bootstrap/.env) and re-run"
+            exit 1
+          fi
+
           APP_PASSWORD=$(openssl rand -hex 24)
           echo "::add-mask::$APP_PASSWORD"
-
-          PG_ADMIN=$(url_with_db postgres)
 
           # role (create or rotate password — hex password is SQL/URL-safe)
           if psql "$PG_ADMIN" -tAc "SELECT 1 FROM pg_roles WHERE rolname='birthday_app'" | grep -q 1; then
@@ -89,7 +112,7 @@ jobs:
           psql "$PG_ADMIN" -q -c "GRANT CONNECT ON DATABASE birthday TO birthday_app"
 
           # schema objects + least-privilege grants (no DDL/DELETE for the app)
-          psql "$(url_with_db birthday)" -v ON_ERROR_STOP=1 -q <<'SQL'
+          psql "$(url_with_db "$ADMIN_URL" birthday)" -v ON_ERROR_STOP=1 -q <<'SQL'
           REVOKE CREATE ON SCHEMA public FROM PUBLIC;
           GRANT USAGE ON SCHEMA public TO birthday_app;
           CREATE TABLE IF NOT EXISTS rsvps (
