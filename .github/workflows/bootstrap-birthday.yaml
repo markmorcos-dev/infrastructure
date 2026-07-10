@@ -41,10 +41,12 @@ jobs:
 
           command -v psql >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client >/dev/null; }
 
-          # Idempotence: if the secret exists, a previous run finished — bail out.
+          # Idempotence: if the secret exists, provisioning already ran —
+          # skip it but still run the maintenance tail below.
+          PROVISION=1
           if kubectl -n portfolio get secret database-secrets >/dev/null 2>&1; then
-            echo "portfolio/database-secrets already exists — nothing to do."
-            exit 0
+            echo "portfolio/database-secrets already exists — maintenance only."
+            PROVISION=""
           fi
 
           # Admin connection: repo secret takes precedence; otherwise reuse the
@@ -87,6 +89,8 @@ jobs:
           fi
 
           PG_ADMIN=$(url_with_db "$ADMIN_URL" postgres)
+
+          if [ -n "$PROVISION" ]; then
 
           # fail early with a useful message if this role can't provision
           if ! psql "$PG_ADMIN" -tAc "SELECT 1 FROM pg_roles WHERE rolname = current_user AND (rolsuper OR (rolcreatedb AND rolcreaterole))" | grep -q 1; then
@@ -131,3 +135,9 @@ jobs:
             --from-literal=DATABASE_URL="postgresql://birthday_app:${APP_PASSWORD}@postgres.data.svc.cluster.local:5432/birthday"
 
           echo "✅ birthday DB bootstrapped and portfolio/database-secrets created"
+
+          fi # PROVISION
+
+          # maintenance: drop the deployment smoke-test row (idempotent)
+          psql "$(url_with_db "$ADMIN_URL" birthday)" -c "DELETE FROM rsvps WHERE email = 'test@markmorcos.dev'"
+          echo "✅ maintenance done (test row removed if present)"
