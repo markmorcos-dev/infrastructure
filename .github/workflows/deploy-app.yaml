@@ -3,6 +3,7 @@ name: deploy-app
 on:
   repository_dispatch:
     types:
+      - deploy-jobs
       - deploy-analytics
       - deploy-experimentation
       - deploy-cms
