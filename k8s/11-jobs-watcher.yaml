@@ -1,0 +1,49 @@
+# Gmail response-watcher kick for the jobs pipeline (markmorcos-dev/jobs).
+# POSTs /run/watcher every 10 minutes; the service replies 202 and async-matches
+# new inbox mail against Applied+ entries in the Notion "Job Applications" DB
+# (logs activity, flips interview invites to Interviewing, drafts 10-day
+# follow-ups). Idempotent via the processed-emails table, so re-runs are safe.
+# Gmail scope is read-only; the watcher never sends mail. Runs in `jobs`.
+#
+# SUSPENDED until the Gmail OAuth secret (`gmail-oauth`) exists — flip
+# `suspend: false` once Phase 4 setup is done (see markmorcos-dev/jobs README).
+#
+# Requires a secret `jobs-cron` with key CRON_SECRET, and the SAME value set as
+# CRON_SECRET in the jobs deployment env (the endpoint validates the bearer).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: jobs-watcher
+  namespace: jobs
+spec:
+  schedule: "3-59/10 * * * *" # every 10 min at :03 :13 :23 ...
+  suspend: true
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 120
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: jobs-watcher
+              image: curlimages/curl:8.10.1
+              env:
+                - name: CRON_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: jobs-cron
+                      key: CRON_SECRET
+              resources:
+                requests: { cpu: 50m, memory: 64Mi }
+                limits: { memory: 256Mi }
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  curl -sfSL -X POST \
+                    -H "Authorization: Bearer ${CRON_SECRET}" \
+                    "http://jobs-jobs-service.jobs.svc.cluster.local:3000/run/watcher"
