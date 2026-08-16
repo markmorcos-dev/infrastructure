@@ -1,0 +1,57 @@
+{{- /*
+  Generic CronJobs declared by the app's deployment.yaml (`crons[]`), so apps
+  own their schedules instead of leaking app-specific manifests into k8s/.
+  Unlike services[], `image` is a full reference including tag (third-party
+  pinned images like curlimages/curl:8.10.1 are the common case). The typical
+  use is the "poke my own service" pattern: curl an in-cluster endpoint with a
+  bearer from a secret; the endpoint does the real work idempotently.
+*/}}
+{{- range .Values.crons }}
+{{- $resourceName := printf "%s-%s" $.Values.namespace .name }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $resourceName }}-cronjob
+  namespace: {{ $.Values.namespace }}
+spec:
+  schedule: {{ .schedule | quote }}
+{{- if .timeZone }}
+  timeZone: {{ .timeZone | quote }}
+{{- end }}
+  suspend: {{ .suspend | default false }}
+  concurrencyPolicy: {{ .concurrencyPolicy | default "Forbid" }}
+  successfulJobsHistoryLimit: {{ .successfulJobsHistoryLimit | default 1 }}
+  failedJobsHistoryLimit: {{ .failedJobsHistoryLimit | default 2 }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ .backoffLimit | default 1 }}
+      activeDeadlineSeconds: {{ .activeDeadlineSeconds | default 300 }}
+      template:
+        metadata:
+          labels:
+            app: {{ $resourceName }}
+        spec:
+          restartPolicy: {{ .restartPolicy | default "OnFailure" }}
+          imagePullSecrets:
+            - name: {{ $.Values.imagePullSecret | default "ghcr-pull" }}
+          containers:
+            - name: {{ .name }}
+              image: {{ .image | quote }}
+              imagePullPolicy: {{ .pullPolicy | default "IfNotPresent" }}
+{{- if .command }}
+              command: {{ toJson .command }}
+{{- end }}
+{{- if .args }}
+              args:
+{{ toYaml .args | indent 16 }}
+{{- end }}
+{{- if .env }}
+              env:
+{{ toYaml .env | indent 16 }}
+{{- end }}
+{{- if .resources }}
+              resources:
+{{ toYaml .resources | indent 16 }}
+{{- end }}
+{{- end }}
