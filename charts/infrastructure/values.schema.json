@@ -65,6 +65,76 @@
       "type": "string",
       "description": "Name of the project"
     },
+    "crons": {
+      "type": "array",
+      "description": "CronJobs owned by this app, rendered as <namespace>-<name>-cronjob. Keeps schedules in the app's own deployment.yaml instead of raw manifests in k8s/. Typical use: curl-poke an in-cluster service endpoint with a bearer from a secret, where the endpoint does the real work idempotently.",
+      "items": {
+        "type": "object",
+        "required": ["name", "schedule", "image"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "CronJob name suffix (the resource is <namespace>-<name>-cronjob)"
+          },
+          "schedule": {
+            "type": "string",
+            "description": "Standard 5-field cron expression, evaluated in UTC unless timeZone is set. Prefer odd minutes so unrelated jobs don't all fire at :00."
+          },
+          "timeZone": {
+            "type": "string",
+            "description": "Optional IANA time zone for the schedule, e.g. Europe/Berlin"
+          },
+          "suspend": {
+            "type": "boolean",
+            "default": false,
+            "description": "Ship the CronJob without letting it fire (e.g. until its secrets exist)"
+          },
+          "image": {
+            "type": "string",
+            "description": "Full image reference INCLUDING tag, e.g. curlimages/curl:8.10.1. Unlike services[].image, no tag is appended."
+          },
+          "pullPolicy": {
+            "type": "string",
+            "enum": ["Always", "IfNotPresent", "Never"],
+            "default": "IfNotPresent",
+            "description": "Image pull policy (pinned third-party images rarely need Always)"
+          },
+          "command": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Container entrypoint override, e.g. [\"/bin/sh\", \"-c\"]"
+          },
+          "args": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Container args, e.g. the shell script body"
+          },
+          "env": {
+            "type": "array",
+            "description": "Same shape as services[].env: name/value or name/valueFrom.secretKeyRef",
+            "items": { "type": "object" }
+          },
+          "resources": {
+            "type": "object",
+            "description": "Resource requests/limits"
+          },
+          "concurrencyPolicy": {
+            "type": "string",
+            "enum": ["Allow", "Forbid", "Replace"],
+            "default": "Forbid"
+          },
+          "successfulJobsHistoryLimit": { "type": "integer", "default": 1 },
+          "failedJobsHistoryLimit": { "type": "integer", "default": 2 },
+          "backoffLimit": { "type": "integer", "default": 1 },
+          "activeDeadlineSeconds": { "type": "integer", "default": 300 },
+          "restartPolicy": {
+            "type": "string",
+            "enum": ["OnFailure", "Never"],
+            "default": "OnFailure"
+          }
+        }
+      }
+    },
     "services": {
       "type": "array",
       "items": {
