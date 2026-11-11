@@ -1,0 +1,48 @@
+# Creates or updates trash/app-secrets for the trash app (markmorcos/trash).
+# database-secrets already comes from admin provisioning; this adds the rest:
+#   HOUSE_PASSCODE   from the repo secret TRASH_HOUSE_PASSCODE (required)
+#   SESSION_SECRET   random, kept on re-runs
+#   CRON_TOKEN       random, kept on re-runs
+#   VAPID_*          generated once and NEVER regenerated (that would break every
+#                    phone's push subscription)
+# Safe to re-run: it only fills in missing keys and refreshes the passcode, so this
+# is also how you change the house passcode. Restarts the app afterwards so the pod
+# picks up the new values. The logic lives in scripts/bootstrap-trash-secrets.sh
+# and is tested by scripts/tests/bootstrap-trash-secrets.test.sh.
+
+name: bootstrap-trash
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/tests/bootstrap-trash-secrets.test.sh
+
+  bootstrap:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure VPN
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TAILSCALE_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TAILSCALE_CLIENT_SECRET }}
+          tags: tag:ci
+
+      - name: Configure Kubernetes
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG }}" > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Checkout infrastructure
+        uses: actions/checkout@v4
+
+      - name: Create or update trash/app-secrets
+        env:
+          HOUSE_PASSCODE: ${{ secrets.TRASH_HOUSE_PASSCODE }}
+        run: bash scripts/bootstrap-trash-secrets.sh
