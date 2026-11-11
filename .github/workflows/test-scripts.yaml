@@ -1,0 +1,15 @@
+name: test-scripts
+
+on:
+  pull_request:
+    paths: ["scripts/**", ".github/workflows/test-scripts.yaml"]
+  push:
+    branches: [main]
+    paths: ["scripts/**", ".github/workflows/test-scripts.yaml"]
+
+jobs:
+  bootstrap-trash-secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/tests/bootstrap-trash-secrets.test.sh

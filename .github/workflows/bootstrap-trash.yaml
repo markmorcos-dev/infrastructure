@@ -7,7 +7,8 @@
 #                    phone's push subscription)
 # Safe to re-run: it only fills in missing keys and refreshes the passcode, so this
 # is also how you change the house passcode. Restarts the app afterwards so the pod
-# picks up the new values.
+# picks up the new values. The logic lives in scripts/bootstrap-trash-secrets.sh
+# and is tested by scripts/tests/bootstrap-trash-secrets.test.sh.
 
 name: bootstrap-trash
 
@@ -15,7 +16,14 @@ on:
   workflow_dispatch: {}
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/tests/bootstrap-trash-secrets.test.sh
+
   bootstrap:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Configure VPN
@@ -31,54 +39,10 @@ jobs:
           echo "${{ secrets.KUBECONFIG }}" > ~/.kube/config
           chmod 600 ~/.kube/config
 
+      - name: Checkout infrastructure
+        uses: actions/checkout@v4
+
       - name: Create or update trash/app-secrets
         env:
           HOUSE_PASSCODE: ${{ secrets.TRASH_HOUSE_PASSCODE }}
-        run: |
-          set -euo pipefail
-          NS=trash
-
-          kubectl get namespace "$NS" >/dev/null || { echo "::error::namespace $NS doesn't exist; provision the project in admin first"; exit 1; }
-
-          existing=$(kubectl -n "$NS" get secret app-secrets -o json 2>/dev/null || echo '{}')
-          get() { echo "$existing" | jq -r --arg k "$1" '.data[$k] // empty' | base64 -d; }
-
-          if [ -z "${HOUSE_PASSCODE:-}" ]; then
-            HOUSE_PASSCODE=$(get HOUSE_PASSCODE)
-            [ -n "$HOUSE_PASSCODE" ] || { echo "::error::add the repo secret TRASH_HOUSE_PASSCODE (the code everyone types to join) and re-run"; exit 1; }
-            echo "keeping the existing passcode"
-          fi
-
-          SESSION_SECRET=$(get SESSION_SECRET); [ -n "$SESSION_SECRET" ] || { SESSION_SECRET=$(openssl rand -hex 32); echo "generated SESSION_SECRET"; }
-          CRON_TOKEN=$(get CRON_TOKEN);         [ -n "$CRON_TOKEN" ]     || { CRON_TOKEN=$(openssl rand -hex 32); echo "generated CRON_TOKEN"; }
-
-          VAPID_PUBLIC_KEY=$(get VAPID_PUBLIC_KEY)
-          VAPID_PRIVATE_KEY=$(get VAPID_PRIVATE_KEY)
-          if [ -z "$VAPID_PUBLIC_KEY" ] || [ -z "$VAPID_PRIVATE_KEY" ]; then
-            keys=$(npx --yes web-push@3.6.7 generate-vapid-keys --json)
-            VAPID_PUBLIC_KEY=$(echo "$keys" | jq -r .publicKey)
-            VAPID_PRIVATE_KEY=$(echo "$keys" | jq -r .privateKey)
-            echo "generated VAPID keys"
-          else
-            echo "keeping the existing VAPID keys"
-          fi
-          VAPID_SUBJECT=$(get VAPID_SUBJECT); [ -n "$VAPID_SUBJECT" ] || VAPID_SUBJECT="https://trash.morcos.tech"
-
-          for v in "$HOUSE_PASSCODE" "$SESSION_SECRET" "$CRON_TOKEN" "$VAPID_PRIVATE_KEY"; do echo "::add-mask::$v"; done
-
-          kubectl -n "$NS" create secret generic app-secrets \
-            --from-literal=HOUSE_PASSCODE="$HOUSE_PASSCODE" \
-            --from-literal=SESSION_SECRET="$SESSION_SECRET" \
-            --from-literal=CRON_TOKEN="$CRON_TOKEN" \
-            --from-literal=VAPID_PUBLIC_KEY="$VAPID_PUBLIC_KEY" \
-            --from-literal=VAPID_PRIVATE_KEY="$VAPID_PRIVATE_KEY" \
-            --from-literal=VAPID_SUBJECT="$VAPID_SUBJECT" \
-            --dry-run=client -o yaml | kubectl apply -f -
-          echo "✅ trash/app-secrets is up to date"
-
-          if kubectl -n "$NS" get deployment trash-trash-deployment >/dev/null 2>&1; then
-            kubectl -n "$NS" rollout restart deployment/trash-trash-deployment
-            echo "restarted the app so it reads the new values"
-          else
-            echo "the app isn't deployed yet; it will read app-secrets on its first deploy"
-          fi
+        run: bash scripts/bootstrap-trash-secrets.sh
