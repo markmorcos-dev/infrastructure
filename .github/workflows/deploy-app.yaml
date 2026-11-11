@@ -3,6 +3,7 @@ name: deploy-app
 on:
   repository_dispatch:
     types:
+      - deploy-trash
       - deploy-jobs
       - deploy-analytics
       - deploy-experimentation
