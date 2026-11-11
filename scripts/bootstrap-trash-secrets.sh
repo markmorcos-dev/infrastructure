@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Create or update <namespace>/app-secrets for the trash app (markmorcos/trash).
 # Fills in missing keys, keeps existing ones, and never regenerates VAPID keys
-# (that would break every phone's push subscription). HOUSE_PASSCODE from the
-# environment replaces the stored one; without it the stored one is kept.
-# Restarts the app afterwards if it is deployed.
+# (that would break every phone's push subscription). The app has no passcode:
+# anyone with the link picks their name. Restarts the app afterwards if it is
+# deployed.
 #
-# Env: HOUSE_PASSCODE (optional after the first run), NAMESPACE (default: trash)
+# Env: NAMESPACE (default: trash)
 set -euo pipefail
 
 NS="${NAMESPACE:-trash}"
@@ -16,14 +16,6 @@ kubectl get namespace "$NS" >/dev/null 2>&1 || { echo "::error::namespace $NS do
 existing=$(kubectl -n "$NS" get secret app-secrets -o json 2>/dev/null || echo '{}')
 get() { echo "$existing" | jq -r --arg k "$1" '.data[$k] // empty' | base64 -d; }
 mask() { [ -n "${GITHUB_ACTIONS:-}" ] && echo "::add-mask::$1" || true; }
-
-if [ -z "${HOUSE_PASSCODE:-}" ]; then
-  HOUSE_PASSCODE=$(get HOUSE_PASSCODE)
-  [ -n "$HOUSE_PASSCODE" ] || { echo "::error::add the repo secret TRASH_HOUSE_PASSCODE (the code everyone types to join) and re-run"; exit 1; }
-  echo "keeping the existing passcode"
-else
-  echo "setting the passcode"
-fi
 
 SESSION_SECRET=$(get SESSION_SECRET); [ -n "$SESSION_SECRET" ] || { SESSION_SECRET=$(openssl rand -hex 32); echo "generated SESSION_SECRET"; }
 CRON_TOKEN=$(get CRON_TOKEN);         [ -n "$CRON_TOKEN" ]     || { CRON_TOKEN=$(openssl rand -hex 32); echo "generated CRON_TOKEN"; }
@@ -40,10 +32,9 @@ else
 fi
 VAPID_SUBJECT=$(get VAPID_SUBJECT); [ -n "$VAPID_SUBJECT" ] || VAPID_SUBJECT="https://trash.morcos.tech"
 
-for v in "$HOUSE_PASSCODE" "$SESSION_SECRET" "$CRON_TOKEN" "$VAPID_PRIVATE_KEY"; do mask "$v"; done
+for v in "$SESSION_SECRET" "$CRON_TOKEN" "$VAPID_PRIVATE_KEY"; do mask "$v"; done
 
 kubectl -n "$NS" create secret generic app-secrets \
-  --from-literal=HOUSE_PASSCODE="$HOUSE_PASSCODE" \
   --from-literal=SESSION_SECRET="$SESSION_SECRET" \
   --from-literal=CRON_TOKEN="$CRON_TOKEN" \
   --from-literal=VAPID_PUBLIC_KEY="$VAPID_PUBLIC_KEY" \

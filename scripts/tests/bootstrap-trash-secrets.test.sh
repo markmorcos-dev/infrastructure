@@ -49,7 +49,7 @@ echo "{\"publicKey\":\"PUB$n\",\"privateKey\":\"PRIV$n\"}"
 N
   chmod +x "$WORK/bin/kubectl" "$WORK/bin/npx"
   export PATH="$WORK/bin:$PATH"
-  unset HOUSE_PASSCODE GITHUB_ACTIONS
+  unset GITHUB_ACTIONS
 }
 
 teardown() { rm -rf "$WORK"; }
@@ -70,17 +70,15 @@ check "fails when the namespace is missing" test "$CODE" -ne 0
 check "explains how to fix a missing namespace" grep -q "provision the project in admin" <<<"$OUT"
 teardown
 
-setup; touch "$FAKE_STATE/namespace"
+setup
 run
-check "fails on first run without a passcode" test "$CODE" -ne 0
-check "names the repo secret to add" grep -q "TRASH_HOUSE_PASSCODE" <<<"$OUT"
-check "writes nothing when it fails" test ! -f "$FAKE_STATE/secret.json"
+check "writes nothing when the namespace is missing" test ! -f "$FAKE_STATE/secret.json"
 teardown
 
 setup; touch "$FAKE_STATE/namespace"
-HOUSE_PASSCODE=4711 run
-check "first run succeeds" test "$CODE" -eq 0
-check "stores the passcode" test "$(key HOUSE_PASSCODE)" = "4711"
+run
+check "first run succeeds with no input at all" test "$CODE" -eq 0
+check "stores no passcode (the app has none)" test -z "$(key HOUSE_PASSCODE)"
 check "generates a 64-char session secret" test "$(key SESSION_SECRET | wc -c)" -eq 64
 check "generates a cron token" test -n "$(key CRON_TOKEN)"
 check "generates VAPID keys" test "$(key VAPID_PUBLIC_KEY)/$(key VAPID_PRIVATE_KEY)" = "PUB1/PRIV1"
@@ -90,30 +88,29 @@ check "says the app will pick it up on first deploy" grep -q "first deploy" <<<"
 teardown
 
 setup; touch "$FAKE_STATE/namespace" "$FAKE_STATE/deployment"
-HOUSE_PASSCODE=4711 GITHUB_ACTIONS=true run
-check "masks secrets in GitHub Actions logs" grep -q "::add-mask::4711" <<<"$OUT"
+GITHUB_ACTIONS=true run
+check "masks secrets in GitHub Actions logs" grep -q "::add-mask::$(key CRON_TOKEN)" <<<"$OUT"
 check "restarts a deployed app" test -f "$FAKE_STATE/restarts"
 check "never prints the session secret unmasked" bash -c "! grep -v add-mask <<<\"\$1\" | grep -q \"\$2\"" _ "$OUT" "$(key SESSION_SECRET)"
 teardown
 
 setup; touch "$FAKE_STATE/namespace"
-NAMESPACE=staging-trash HOUSE_PASSCODE=1 run
+NAMESPACE=staging-trash run
 check "respects NAMESPACE" grep -q -- "-n staging-trash create secret" "$FAKE_STATE/calls"
 teardown
 
 echo "integration"
 
 setup; touch "$FAKE_STATE/namespace"
-HOUSE_PASSCODE=4711 run
+run
 first_session=$(key SESSION_SECRET); first_cron=$(key CRON_TOKEN)
 touch "$FAKE_STATE/deployment"
 run
-check "re-run without a passcode keeps the stored one" test "$(key HOUSE_PASSCODE)" = "4711"
 check "re-run keeps the session secret" test "$(key SESSION_SECRET)" = "$first_session"
 check "re-run keeps the cron token" test "$(key CRON_TOKEN)" = "$first_cron"
 check "re-run never regenerates VAPID keys" test "$(key VAPID_PUBLIC_KEY)" = "PUB1" -a "$(cat "$FAKE_STATE/vapid_count")" = "1"
-HOUSE_PASSCODE=2026 run
-check "changing the passcode updates only the passcode" test "$(key HOUSE_PASSCODE)/$(key SESSION_SECRET)/$(key VAPID_PUBLIC_KEY)" = "2026/$first_session/PUB1"
+HOUSE_PASSCODE=leftover run
+check "ignores a leftover HOUSE_PASSCODE variable" test -z "$(key HOUSE_PASSCODE)" -a "$(key SESSION_SECRET)" = "$first_session"
 check "each run on a deployed app restarts it" test "$(wc -l < "$FAKE_STATE/restarts")" -eq 2
 jq '.data |= del(.VAPID_PRIVATE_KEY)' "$FAKE_STATE/secret.json" > "$FAKE_STATE/s" && mv "$FAKE_STATE/s" "$FAKE_STATE/secret.json"
 run
