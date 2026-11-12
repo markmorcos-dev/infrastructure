@@ -1,13 +1,12 @@
 # Creates or updates trash/app-secrets for the trash app (markmorcos/trash).
 # database-secrets already comes from admin provisioning; this adds the rest:
-#   HOUSE_PASSCODE   from the repo secret TRASH_HOUSE_PASSCODE (required)
 #   SESSION_SECRET   random, kept on re-runs
 #   CRON_TOKEN       random, kept on re-runs
 #   VAPID_*          generated once and NEVER regenerated (that would break every
 #                    phone's push subscription)
-# Safe to re-run: it only fills in missing keys and refreshes the passcode, so this
-# is also how you change the house passcode. Restarts the app afterwards so the pod
-# picks up the new values. The logic lives in scripts/bootstrap-trash-secrets.sh
+# The app has no passcode: anyone with the link picks their name.
+# Safe to re-run: it only fills in missing keys. Restarts the app afterwards so the
+# pod picks up the new values. The logic lives in scripts/bootstrap-trash-secrets.sh
 # and is tested by scripts/tests/bootstrap-trash-secrets.test.sh.
 
 name: bootstrap-trash
@@ -43,6 +42,4 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Create or update trash/app-secrets
-        env:
-          HOUSE_PASSCODE: ${{ secrets.TRASH_HOUSE_PASSCODE }}
         run: bash scripts/bootstrap-trash-secrets.sh
