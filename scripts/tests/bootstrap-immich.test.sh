@@ -87,7 +87,11 @@ check "agent: never calls kubectl" test ! -s "$FAKE_STATE/calls"
 check "agent: prints the manual secret command" grep -q "create secret generic immich-db" <<<"$OUT"
 teardown
 
-setup; rm "$WORK/bin/kubectl"; PATH="$WORK/bin:/usr/bin:/bin" run
+# PATH holds only what immich.sh needs: CI runners ship a real /usr/bin/kubectl,
+# so falling back to /usr/bin would not hide it.
+setup; mkdir "$WORK/sysbin"
+for t in bash dirname install head od tr sleep; do ln -s "$(command -v "$t")" "$WORK/sysbin/$t"; done
+OUT=$(PATH="$WORK/sysbin" "$WORK/sysbin/bash" "$SCRIPT" 2>&1); CODE=$?
 check "server without kubectl: fails clearly" test "$CODE" -ne 0 -a -n "$(grep 'kubectl not found' <<<"$OUT")"
 teardown
 
