@@ -13,9 +13,13 @@
 #   kubectl -n immich create secret generic immich-db \
 #     --from-literal=DB_PASSWORD="$(openssl rand -hex 24)"
 #
-# No Ingress yet on purpose: the first visitor creates the admin account. Do it
-# privately first:  kubectl -n immich port-forward svc/immich-server 2283
-# then open http://localhost:2283. The public Ingress lands in a follow-up.
+# Public at https://photos.morcos.tech (covered by the *.morcos.tech wildcard).
+# The FIRST visitor becomes admin: right after the first apply, create the admin
+# account (publicly, or privately via
+#   kubectl -n immich port-forward svc/immich-server 2283).
+# The record is Cloudflare-proxied, and Cloudflare's free plan caps a request at
+# 100 MB, so a single video over 100 MB fails to upload. If that bites, add an
+# explicit DNS-only (grey-cloud) `photos` record in Cloudflare.
 #
 # Upgrading: bump the server AND machine-learning tags together (keep them
 # equal; scripts/tests/immich-manifest.test.sh enforces it) after reading the
@@ -241,3 +245,37 @@ spec:
   selector: { app: immich-server }
   ports:
     - { name: http, port: 2283, targetPort: 2283 }
+---
+# ----------------------------------------------------------------- ingress ---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: immich-ingress
+  namespace: immich
+  annotations:
+    cert-manager.io/cluster-issuer: "infrastructure-issuer"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/use-forwarded-headers: "true"
+    # Uploads (videos) are unbounded and slow; don't cap or buffer them.
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - photos.morcos.tech
+      secretName: immich-tls
+  rules:
+    - host: photos.morcos.tech
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: immich-server
+                port:
+                  number: 2283

@@ -62,13 +62,20 @@ rule_privileged_only_server() {
   jq -r '.[] | select(.kind=="Deployment") | . as $d | .spec.template.spec.containers[]
     | select(.securityContext.privileged == true) | select($d.metadata.name != "immich-server") | .name'
 }
-rule_ingress_ok() { # no public ingress until the admin exists; when added, uploads must not be capped
+rule_ingress_uncapped() { # nginx defaults to 1m bodies: video uploads would 413
   jq -r '.[] | select(.kind=="Ingress")
     | select(.metadata.annotations["nginx.ingress.kubernetes.io/proxy-body-size"] != "0") | .metadata.name'
 }
+rule_ingress_tls() { # exactly one public ingress; every host it serves has a cert
+  jq -r '[.[] | select(.kind=="Ingress")] as $i
+    | if ($i | length) != 1 then "expected 1 Ingress, got \($i | length)" else
+        $i[0] | ([.spec.tls[]?.hosts[]]) as $tls
+        | .spec.rules[].host | select(. as $h | $tls | index($h) | not) end'
+}
 
 RULES=(pinned_to_m720q single_writer images_pinned versions_match hostpaths_in_data_dir
-       password_from_secret everything_namespaced privileged_only_server ingress_ok)
+       password_from_secret everything_namespaced privileged_only_server
+       ingress_uncapped ingress_tls)
 
 echo "# unit: manifest passes every rule"
 for r in "${RULES[@]}"; do
@@ -79,6 +86,7 @@ done
 echo "# unit: each rule rejects a broken manifest"
 srv='(.[] | select(.kind=="Deployment" and .metadata.name=="immich-server"))'
 ml='(.[] | select(.kind=="Deployment" and .metadata.name=="immich-machine-learning"))'
+ing='(.[] | select(.kind=="Ingress"))'
 declare -A BREAK=(
   [pinned_to_m720q]="$srv.spec.template.spec.nodeSelector = {}"
   [single_writer]="$srv.spec.replicas = 2"
@@ -88,7 +96,8 @@ declare -A BREAK=(
   [password_from_secret]="$srv.spec.template.spec.containers[0].env[0] = {name: \"DB_PASSWORD\", value: \"hunter2\"}"
   [everything_namespaced]="$srv.metadata.namespace = \"default\""
   [privileged_only_server]="$ml.spec.template.spec.containers[0].securityContext = {privileged: true}"
-  [ingress_ok]=". + [{kind: \"Ingress\", metadata: {name: \"immich\", namespace: \"immich\", annotations: {}}}]"
+  [ingress_uncapped]="$ing.metadata.annotations[\"nginx.ingress.kubernetes.io/proxy-body-size\"] = \"10m\""
+  [ingress_tls]="$ing.spec.tls = []"
 )
 for r in "${RULES[@]}"; do
   out=$(jq "${BREAK[$r]}" <<<"$DOCS" | rule_$r)
@@ -117,6 +126,10 @@ ml_host=$(sed -E 's#^https?://([^:/]+):([0-9]+).*#\1#' <<<"$ml_url")
 ml_port=$(sed -E 's#^https?://([^:/]+):([0-9]+).*#\2#' <<<"$ml_url")
 check "server -> machine-learning ($ml_url)" wired "$ml_host" "$ml_port"
 check "port-forward target svc/immich-server:2283" wired immich-server 2283
+ing_svc=$(q '.[] | select(.kind=="Ingress") | .spec.rules[0].http.paths[0].backend.service.name')
+ing_port=$(q '.[] | select(.kind=="Ingress") | .spec.rules[0].http.paths[0].backend.service.port.number')
+check "ingress -> $ing_svc:$ing_port reaches the server pod" wired "$ing_svc" "$ing_port"
+check "ingress backend is the server, not another service" test "$ing_svc" = immich-server
 
 # Postgres must create exactly the DB/user the server logs in with.
 pg_from_cfg() { q --arg n "$1" '.[] | select(.metadata.name=="immich-postgres" and .kind=="Deployment")
