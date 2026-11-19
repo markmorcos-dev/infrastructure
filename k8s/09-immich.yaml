@@ -1,0 +1,281 @@
+# Immich (self-hosted photos), pinned to the m720q.
+#
+# All state lives on the m720q's data disk via hostPath, so every pod is pinned
+# to that node and runs as a single replica with Recreate (no two writers):
+#   /mnt/data/immich/library      originals, thumbnails, encoded video, DB dumps
+#   /mnt/data/immich/postgres     Immich's own Postgres (needs VectorChord, which
+#                                 the shared host Postgres doesn't have)
+#   /mnt/data/immich/model-cache  ML models (re-downloadable)
+#
+# Manual prerequisites (one-time):
+#   sudo mkdir -p /mnt/data/immich/{library,postgres,model-cache}   # on m720q
+#   kubectl create ns immich
+#   kubectl -n immich create secret generic immich-db \
+#     --from-literal=DB_PASSWORD="$(openssl rand -hex 24)"
+#
+# Public at https://photos.morcos.tech (covered by the *.morcos.tech wildcard).
+# The FIRST visitor becomes admin: right after the first apply, create the admin
+# account (publicly, or privately via
+#   kubectl -n immich port-forward svc/immich-server 2283).
+# The record is Cloudflare-proxied, and Cloudflare's free plan caps a request at
+# 100 MB, so a single video over 100 MB fails to upload. If that bites, add an
+# explicit DNS-only (grey-cloud) `photos` record in Cloudflare.
+#
+# Upgrading: bump the server AND machine-learning tags together (keep them
+# equal; scripts/tests/immich-manifest.test.sh enforces it) after reading the
+# release notes. Mirrors the official docker-compose.yml of that release.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: immich
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: immich-env
+  namespace: immich
+data:
+  TZ: Europe/Berlin
+  DB_HOSTNAME: immich-postgres
+  DB_PORT: "5432"
+  DB_USERNAME: postgres
+  DB_DATABASE_NAME: immich
+  REDIS_HOSTNAME: immich-valkey
+  REDIS_PORT: "6379"
+  IMMICH_MACHINE_LEARNING_URL: http://immich-machine-learning:3003
+---
+# ---------------------------------------------------------------- postgres ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: immich-postgres
+  namespace: immich
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: immich-postgres }
+  template:
+    metadata:
+      labels: { app: immich-postgres }
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: m720q
+      containers:
+        - name: postgres
+          image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
+          ports:
+            - { name: postgres, containerPort: 5432 }
+          env:
+            - name: POSTGRES_USER
+              valueFrom: { configMapKeyRef: { name: immich-env, key: DB_USERNAME } }
+            - name: POSTGRES_DB
+              valueFrom: { configMapKeyRef: { name: immich-env, key: DB_DATABASE_NAME } }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: immich-db, key: DB_PASSWORD } }
+            - name: POSTGRES_INITDB_ARGS
+              value: --data-checksums
+          readinessProbe:
+            exec: { command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""] }
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 2Gi }
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+            - { name: shm, mountPath: /dev/shm }
+      volumes:
+        - name: data
+          hostPath: { path: /mnt/data/immich/postgres, type: Directory }
+        # compose uses shm_size: 128mb; Postgres needs more than the 64Mi default.
+        - name: shm
+          emptyDir: { medium: Memory, sizeLimit: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: immich-postgres
+  namespace: immich
+spec:
+  selector: { app: immich-postgres }
+  ports:
+    - { name: postgres, port: 5432, targetPort: 5432 }
+---
+# ------------------------------------------------------------------ valkey ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: immich-valkey
+  namespace: immich
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: immich-valkey }
+  template:
+    metadata:
+      labels: { app: immich-valkey }
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: m720q
+      containers:
+        - name: valkey
+          image: docker.io/valkey/valkey:9@sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd
+          ports:
+            - { name: redis, containerPort: 6379 }
+          readinessProbe:
+            exec: { command: ["sh", "-c", "valkey-cli ping | grep -q PONG"] }
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 20m, memory: 32Mi }
+            limits: { memory: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: immich-valkey
+  namespace: immich
+spec:
+  selector: { app: immich-valkey }
+  ports:
+    - { name: redis, port: 6379, targetPort: 6379 }
+---
+# -------------------------------------------------------- machine learning ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: immich-machine-learning
+  namespace: immich
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: immich-machine-learning }
+  template:
+    metadata:
+      labels: { app: immich-machine-learning }
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: m720q
+      containers:
+        - name: machine-learning
+          image: ghcr.io/immich-app/immich-machine-learning:v3.4.2
+          ports:
+            - { name: http, containerPort: 3003 }
+          envFrom:
+            - configMapRef: { name: immich-env }
+          env:
+            - { name: MACHINE_LEARNING_MODEL_REVISION, value: v2 }
+          readinessProbe:
+            httpGet: { path: /ping, port: 3003 }
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 250m, memory: 1Gi }
+            limits: { memory: 4Gi }
+          volumeMounts:
+            - { name: cache, mountPath: /cache }
+      volumes:
+        - name: cache
+          hostPath: { path: /mnt/data/immich/model-cache, type: Directory }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: immich-machine-learning
+  namespace: immich
+spec:
+  selector: { app: immich-machine-learning }
+  ports:
+    - { name: http, port: 3003, targetPort: 3003 }
+---
+# ------------------------------------------------------------------ server ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: immich-server
+  namespace: immich
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: immich-server }
+  template:
+    metadata:
+      labels: { app: immich-server }
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: m720q
+      containers:
+        - name: server
+          image: ghcr.io/immich-app/immich-server:v3.4.2
+          ports:
+            - { name: http, containerPort: 2283 }
+          envFrom:
+            - configMapRef: { name: immich-env }
+          env:
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: immich-db, key: DB_PASSWORD } }
+          # Quick Sync (Intel UHD 630) needs /dev/dri. A hostPath device node is
+          # only usable by a privileged container under k3s's containerd (no GPU
+          # device plugin installed); scoped to this one container.
+          securityContext:
+            privileged: true
+          readinessProbe:
+            httpGet: { path: /api/server/ping, port: 2283 }
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { memory: 4Gi }
+          volumeMounts:
+            - { name: library, mountPath: /data }
+            - { name: dri, mountPath: /dev/dri }
+      volumes:
+        - name: library
+          hostPath: { path: /mnt/data/immich/library, type: Directory }
+        - name: dri
+          hostPath: { path: /dev/dri, type: Directory }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: immich-server
+  namespace: immich
+spec:
+  selector: { app: immich-server }
+  ports:
+    - { name: http, port: 2283, targetPort: 2283 }
+---
+# ----------------------------------------------------------------- ingress ---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: immich-ingress
+  namespace: immich
+  annotations:
+    cert-manager.io/cluster-issuer: "infrastructure-issuer"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/use-forwarded-headers: "true"
+    # Uploads (videos) are unbounded and slow; don't cap or buffer them.
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - photos.morcos.tech
+      secretName: immich-tls
+  rules:
+    - host: photos.morcos.tech
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: immich-server
+                port:
+                  number: 2283

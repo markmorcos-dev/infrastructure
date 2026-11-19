@@ -2,10 +2,10 @@ name: test-scripts
 
 on:
   pull_request:
-    paths: ["scripts/**", ".github/workflows/test-scripts.yaml"]
+    paths: ["scripts/**", "k8s/**", ".github/workflows/test-scripts.yaml"]
   push:
     branches: [main]
-    paths: ["scripts/**", ".github/workflows/test-scripts.yaml"]
+    paths: ["scripts/**", "k8s/**", ".github/workflows/test-scripts.yaml"]
 
 jobs:
   bootstrap-trash-secrets:
@@ -13,3 +13,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: bash scripts/tests/bootstrap-trash-secrets.test.sh
+
+  immich-manifest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -c 'import yaml' || pip install pyyaml
+      - run: bash scripts/tests/immich-manifest.test.sh
