@@ -50,17 +50,20 @@ INSTALL_POSTGRES="${INSTALL_POSTGRES:-0}"
 INSTALL_MONGO="${INSTALL_MONGO:-0}"
 INSTALL_REDIS="${INSTALL_REDIS:-0}"
 INSTALL_DNSMASQ="${INSTALL_DNSMASQ:-0}"
+INSTALL_IMMICH="${INSTALL_IMMICH:-0}"
 
 # Values we need to locate data dirs / units (mirror run.sh defaults)
 POSTGRES_VERSION="${POSTGRES_VERSION:-16}"
 POSTGRES_DATA="${POSTGRES_DATA:-/mnt/data/postgres}"
 MONGO_DATA="${MONGO_DATA:-/mnt/data/mongo}"
 REDIS_DATA="${REDIS_DATA:-/mnt/data/redis}"
+IMMICH_DATA="${IMMICH_DATA:-/mnt/data/immich}"
 MINIO_VOLUMES="${MINIO_VOLUMES:-/mnt/data/minio}"
 DNSMASQ_DOMAIN="${DNSMASQ_DOMAIN:-morcos.lan}"
 
 # Teardown-only switches
 PURGE_DATA="${PURGE_DATA:-0}"
+PURGE_IMMICH="${PURGE_IMMICH:-0}"                # photos: needs PURGE_DATA=1 too
 REMOVE_TAILSCALE="${REMOVE_TAILSCALE:-0}"
 FORCE="${FORCE:-0}"
 
@@ -69,6 +72,7 @@ if [[ "$FORCE" != "1" ]]; then
   if [[ -t 0 ]]; then
     warn "About to tear down infrastructure components on $(hostname)."
     [[ "$PURGE_DATA"       == "1" ]] && warn "PURGE_DATA=1 — database/MinIO data WILL be deleted."
+    [[ "$PURGE_DATA" == "1" && "$PURGE_IMMICH" == "1" ]] && warn "PURGE_IMMICH=1 — the Immich PHOTO LIBRARY WILL be deleted."
     [[ "$REMOVE_TAILSCALE" == "1" ]] && warn "REMOVE_TAILSCALE=1 — this may drop your SSH session."
     read -rp "Continue? [y/N] " ans
     [[ "$ans" =~ ^[Yy]$ ]] || die "Aborted."
@@ -82,6 +86,19 @@ stop_disable() { for u in "$@"; do systemctl disable --now "$u" >/dev/null 2>&1 
 rm_f()         { rm -f  "$@" 2>/dev/null || true; }
 rm_rf()        { rm -rf "$@" 2>/dev/null || true; }
 purge()        { DEBIAN_FRONTEND=noninteractive apt-get purge -y -qq "$@" >/dev/null 2>&1 || true; }
+
+# === Reverse Phase 11: Immich ==================================================
+# The namespace/secret go away with k3s (or: kubectl delete ns immich). The
+# photo library is irreplaceable, so PURGE_DATA alone never touches it: it
+# needs its own PURGE_IMMICH=1 on top.
+if [[ "$INSTALL_IMMICH" == "1" ]]; then
+  log "Removing Immich prerequisites..."
+  if [[ "$PURGE_DATA" == "1" && "$PURGE_IMMICH" == "1" ]]; then
+    rm_rf "$IMMICH_DATA"; warn "Deleted Immich data (photos + DB): $IMMICH_DATA"
+  else
+    log "Kept Immich photos + DB at $IMMICH_DATA (delete with PURGE_DATA=1 PURGE_IMMICH=1)"
+  fi
+fi
 
 # === Reverse Phase 10: dnsmasq ================================================
 if [[ "$INSTALL_DNSMASQ" == "1" ]]; then

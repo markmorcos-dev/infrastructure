@@ -47,6 +47,7 @@ INSTALL_POSTGRES="${INSTALL_POSTGRES:-0}"
 INSTALL_MONGO="${INSTALL_MONGO:-0}"
 INSTALL_REDIS="${INSTALL_REDIS:-0}"
 INSTALL_DNSMASQ="${INSTALL_DNSMASQ:-0}"
+INSTALL_IMMICH="${INSTALL_IMMICH:-0}"
 
 # Tailscale
 TAILSCALE_AUTHKEY="${TAILSCALE_AUTHKEY:-}"
@@ -107,6 +108,10 @@ REDIS_REPO_DIST="${REDIS_REPO_DIST:-}"              # override apt codename (def
 
 # dnsmasq (internal service-catalog DNS — runs on the data host)
 DNSMASQ_DOMAIN="${DNSMASQ_DOMAIN:-morcos.lan}"
+
+# Immich (k8s/09-immich.yaml) host prerequisites — data dirs + namespace/secret
+IMMICH_DATA="${IMMICH_DATA:-/mnt/data/immich}"
+IMMICH_DB_PASSWORD="${IMMICH_DB_PASSWORD:-}"        # optional; generated once if empty
 
 # === Phase 0: base packages ===================================================
 # Drop the third-party repo files we own *before* the first apt-get update. A
@@ -771,6 +776,22 @@ EOF
   log "Next: in Tailscale admin → DNS → Nameservers → Add Custom"
   log "      nameserver IP = $(tailscale ip -4 2>/dev/null | head -n1 || echo '<this host tailscale IP>')"
   log "      Restrict to search domain = ${DNSMASQ_DOMAIN}"
+fi
+
+# === Phase 11: Immich prerequisites (data host; see bootstrap/immich.sh) =======
+# The pods are deployed by CI (k8s/09-immich.yaml); this only prepares what they
+# mount and the hand-made secret. Uses the copy next to this script when run
+# from a checkout, else fetches it (curl | bash has no checkout).
+if [[ "$INSTALL_IMMICH" == "1" ]]; then
+  log "Setting up Immich prerequisites..."
+  SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-.}")" 2>/dev/null && pwd || echo .)"
+  IMMICH_SCRIPT="$SELF_DIR/immich.sh"
+  if [[ ! -f "$IMMICH_SCRIPT" ]]; then
+    IMMICH_SCRIPT="$(mktemp)"
+    curl -fsSL "$REPO_RAW_URL/immich.sh" -o "$IMMICH_SCRIPT"
+  fi
+  IMMICH_DATA="$IMMICH_DATA" IMMICH_DB_PASSWORD="$IMMICH_DB_PASSWORD" K3S_ROLE="$K3S_ROLE" \
+    bash "$IMMICH_SCRIPT"
 fi
 
 # === Done =====================================================================

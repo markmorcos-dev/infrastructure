@@ -35,6 +35,8 @@ Safety defaults:
 
 - **Data is kept** unless `PURGE_DATA=1` (then `POSTGRES_DATA` / `MONGO_DATA` /
   `REDIS_DATA` / `MINIO_VOLUMES` are deleted).
+- **Immich photos need an extra switch**: `PURGE_DATA=1` alone keeps
+  `IMMICH_DATA`; it is only deleted with `PURGE_DATA=1 PURGE_IMMICH=1`.
 - **Tailscale is left in place** unless `REMOVE_TAILSCALE=1` — removing it would
   drop a Tailscale-SSH session, so do that from a local console.
 - **k3s** is removed via its official uninstall script, which also clears
@@ -93,6 +95,7 @@ CF_API_TOKEN=...                           # same token; both nodes update DNS f
 | MongoDB | mongodb-org apt repo, `/etc/mongod.conf`, data on `MONGO_DATA` | `INSTALL_MONGO=1` |
 | Redis | packages.redis.io apt repo, `/etc/redis/infrastructure.conf`, data on `REDIS_DATA` | `INSTALL_REDIS=1` |
 | dnsmasq | `/etc/dnsmasq.d/<domain>.conf` + `/etc/infrastructure/dnsmasq/<domain>.hosts` | `INSTALL_DNSMASQ=1` |
+| Immich prerequisites | `IMMICH_DATA` (`/mnt/data/immich`) dirs; on a k3s server also the `immich` namespace + `immich-db` secret ([`immich.sh`](./immich.sh)) | `INSTALL_IMMICH=1` |
 
 ## Adding / removing domains
 
@@ -134,6 +137,7 @@ If it returns `16384`, add `kernel=kernel8.img` to `/boot/firmware/config.txt` a
 
 - `run.sh` — the bootstrap; idempotent, safe to re-run
 - `down.sh` — reverses `run.sh`; idempotent. Keeps data unless `PURGE_DATA=1`
+- `immich.sh` — Immich host prerequisites (Phase 11 of `run.sh`; also runnable alone)
 - `.env.example` — copy + edit to `/etc/infrastructure/bootstrap/.env` on each host
 - `domains.conf` — list of CF zones and records to keep pointed at home IP
 - `README.md` — this file
