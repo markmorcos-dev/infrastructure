@@ -7,7 +7,9 @@
 #                                 the shared host Postgres doesn't have)
 #   /mnt/data/immich/model-cache  ML models (re-downloadable)
 #
-# Manual prerequisites (one-time):
+# Prerequisites: bootstrap/run.sh with INSTALL_IMMICH=1 on the m720q (see
+# bootstrap/immich.sh) creates the data dirs, the namespace and the immich-db
+# secret. By hand instead:
 #   sudo mkdir -p /mnt/data/immich/{library,postgres,model-cache}   # on m720q
 #   kubectl create ns immich
 #   kubectl -n immich create secret generic immich-db \

@@ -1,6 +1,8 @@
 # Off-box backups to Cloudflare R2. A nightly CronJob logical-dumps the
 # infrastructure Postgres DB (all schemas) and mirrors the MinIO cms bucket to
-# R2 (S3-compatible), so the m720q box dying isn't a data-loss event.
+# R2 (S3-compatible), so the m720q box dying isn't a data-loss event. It also
+# mirrors the Immich photo library (originals + Immich's own nightly DB dumps)
+# straight from the m720q's disk, so the job is pinned to that node.
 #
 # Secrets it needs in this namespace:
 #   database-secrets/DATABASE_URL  — copied from the admin namespace (pg source)
@@ -28,22 +30,24 @@ data:
     apk add --no-cache --quiet ca-certificates wget mongodb-tools redis >/dev/null 2>&1 || true
 
     # MinIO client (static binary) — talks to both R2 and MinIO (both S3).
-    wget -qO /tmp/mc https://dl.min.io/client/mc/release/linux-amd64/mc
-    chmod +x /tmp/mc
-    /tmp/mc alias set r2  "$R2_ENDPOINT"    "$R2_ACCESS_KEY"    "$R2_SECRET_KEY"  >/dev/null
-    /tmp/mc alias set src "$MINIO_ENDPOINT" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" >/dev/null
+    # amd64 build: the job is pinned to the m720q (see nodeSelector).
+    MC="${MC:-/tmp/mc}"
+    wget -qO "$MC" https://dl.min.io/client/mc/release/linux-amd64/mc
+    chmod +x "$MC"
+    "$MC" alias set r2  "$R2_ENDPOINT"    "$R2_ACCESS_KEY"    "$R2_SECRET_KEY"  >/dev/null
+    "$MC" alias set src "$MINIO_ENDPOINT" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" >/dev/null
 
     # 1) Postgres: logical dump of the whole infrastructure DB (all schemas),
     #    portable (no owner/privs), gzipped, uploaded timestamped.
     echo "[backup] pg_dump…"
     # --clean --if-exists so the dump can be replayed over the live DB on restore.
     pg_dump --clean --if-exists --no-owner --no-privileges "$DATABASE_URL" | gzip -9 > /tmp/db.sql.gz
-    /tmp/mc cp /tmp/db.sql.gz "r2/$R2_BUCKET/postgres/infrastructure-$TS.sql.gz"
+    "$MC" cp /tmp/db.sql.gz "r2/$R2_BUCKET/postgres/infrastructure-$TS.sql.gz"
     echo "[backup] postgres -> r2/$R2_BUCKET/postgres/infrastructure-$TS.sql.gz ($(wc -c </tmp/db.sql.gz) bytes)"
 
     # 2) MinIO: mirror ALL buckets (no --remove, so deletions are kept).
     echo "[backup] minio mirror (all buckets)…"
-    /tmp/mc mirror --overwrite "src" "r2/$R2_BUCKET/minio"
+    "$MC" mirror --overwrite "src" "r2/$R2_BUCKET/minio"
 
     # 3) Mongo: one gzipped archive per MONGO_URI_* env var.
     for v in $(env | sed -n 's/^\(MONGO_URI_[A-Z0-9_]*\)=.*/\1/p'); do
@@ -51,7 +55,7 @@ data:
       uri=$(printenv "$v")
       echo "[backup] mongodump $name…"
       mongodump --uri="$uri" --archive --gzip > "/tmp/mongo-$name.gz"
-      /tmp/mc cp "/tmp/mongo-$name.gz" "r2/$R2_BUCKET/mongo/$name-$TS.archive.gz"
+      "$MC" cp "/tmp/mongo-$name.gz" "r2/$R2_BUCKET/mongo/$name-$TS.archive.gz"
       echo "[backup] mongo -> r2/$R2_BUCKET/mongo/$name-$TS.archive.gz ($(wc -c < /tmp/mongo-$name.gz) bytes)"
     done
 
@@ -62,12 +66,30 @@ data:
       echo "[backup] redis $name…"
       if redis-cli -u "$url" --rdb "/tmp/redis-$name.rdb" >/dev/null 2>&1 && [ -s "/tmp/redis-$name.rdb" ]; then
         gzip -9 "/tmp/redis-$name.rdb"
-        /tmp/mc cp "/tmp/redis-$name.rdb.gz" "r2/$R2_BUCKET/redis/$name-$TS.rdb.gz"
+        "$MC" cp "/tmp/redis-$name.rdb.gz" "r2/$R2_BUCKET/redis/$name-$TS.rdb.gz"
         echo "[backup] redis -> r2/$R2_BUCKET/redis/$name-$TS.rdb.gz"
       else
         echo "[backup] redis $name skipped (non-fatal; it's cache)"
       fi
     done
+
+    # 5) Immich: mirror what can't be regenerated, read-only from the m720q's
+    #    disk. Originals (upload/, plus library/ when Immich's storage template
+    #    is on), profile pictures, and backups/ (Immich's own nightly DB dumps,
+    #    which hold albums, people, descriptions). thumbs/ and encoded-video/ are
+    #    rebuilt by Immich, so they are skipped. No --remove: a photo deleted in
+    #    Immich stays in R2. Last on purpose, so it can't block the DB backups.
+    IMMICH_SRC="${IMMICH_SRC:-/immich}"
+    if [ -d "$IMMICH_SRC" ]; then
+      for d in upload library profile backups; do
+        [ -d "$IMMICH_SRC/$d" ] || continue
+        echo "[backup] immich mirror $d…"
+        "$MC" mirror --overwrite "$IMMICH_SRC/$d" "r2/$R2_BUCKET/immich/$d"
+      done
+    else
+      echo "[backup] immich: $IMMICH_SRC not mounted — FAILING so it gets noticed" >&2
+      exit 1
+    fi
 
     echo "[backup] done $TS"
 ---
@@ -88,6 +110,8 @@ spec:
       template:
         spec:
           restartPolicy: Never
+          nodeSelector:
+            kubernetes.io/hostname: m720q
           containers:
             - name: backup
               image: postgres:16-alpine
@@ -124,7 +148,13 @@ spec:
               volumeMounts:
                 - name: script
                   mountPath: /scripts
+                - name: immich
+                  mountPath: /immich
+                  readOnly: true
           volumes:
             - name: script
               configMap:
                 name: backup-script
+            # Immich's UPLOAD_LOCATION on the m720q (see k8s/09-immich.yaml).
+            - name: immich
+              hostPath: { path: /mnt/data/immich/library, type: Directory }
