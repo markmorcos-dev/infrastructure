@@ -26,3 +26,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: bash scripts/tests/bootstrap-immich.test.sh
+
+  backup-immich:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -c 'import yaml' || pip install pyyaml
+      - run: bash scripts/tests/backup-immich.test.sh
